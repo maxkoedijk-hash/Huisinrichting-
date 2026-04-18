@@ -1,99 +1,101 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { TextBlockParam, ImageBlockParam } from "@anthropic-ai/sdk/resources/messages";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-export interface DesignSuggestion {
-  stijlomschrijving: string;
+export interface DesignOptie {
+  naam: string;
+  stijlLabel: string;
+  beschrijving: string;
   kleurenpalet: string[];
-  meubeladvies: { item: string; advies: string; voorbeeldLink?: string }[];
-  inrichtingstips: string[];
-  sfeeradvies: string;
-  budgetinschatting: string;
+  meubeladvies: { item: string; advies: string }[];
+  sfeer: string;
+  budget: string;
 }
 
-export async function analyseKamerMetStijl(
+export interface AnalyseResultaat {
+  kamerObservatie: string;
+  stijlSamenvatting: string;
+  opties: [DesignOptie, DesignOptie, DesignOptie];
+}
+
+type Block = TextBlockParam | ImageBlockParam;
+
+export async function analyseKamerDrieOpties(
   kamerImageBase64: string,
   kamerMimeType: "image/jpeg" | "image/png" | "image/webp",
-  pinterestImageUrls: string[],
-  boardNaam?: string
-): Promise<DesignSuggestion> {
-  const pinterestImageContent = pinterestImageUrls
-    .slice(0, 6)
-    .map((url) => ({
-      type: "image" as const,
-      source: { type: "url" as const, url },
-    }));
+  inspiratieBase64s: { data: string; mimeType: "image/jpeg" | "image/png" | "image/webp" }[]
+): Promise<AnalyseResultaat> {
+  const blocks: Block[] = [];
 
-  const systemPrompt = `Je bent een professionele interieurontwerper die gespecialiseerd is in het herkennen van stijlpatronen en het vertalen naar concrete inrichtingsadviezen.
-Je analyseert kamerfoto's en Pinterest-inspiratiefoto's om gepersonaliseerd, praktisch inrichtingsadvies te geven.
-Antwoord altijd in het Nederlands. Wees concreet en enthousiast.`;
+  blocks.push({ type: "text", text: "Hier is de kamerfoto die ingericht moet worden:" });
+  blocks.push({
+    type: "image",
+    source: { type: "base64", media_type: kamerMimeType, data: kamerImageBase64 },
+  });
 
-  const userContent: Anthropic.MessageParam["content"] = [
-    {
+  const slice = inspiratieBase64s.slice(0, 8);
+  if (slice.length > 0) {
+    blocks.push({
       type: "text",
-      text: `Ik heb een foto van een kamer die ik wil inrichten${boardNaam ? ` gebaseerd op mijn Pinterest board "${boardNaam}"` : ""}.
+      text: `Hier zijn ${slice.length} inspiratiefoto's die de stijlvoorkeur van de gebruiker laten zien:`,
+    });
+    for (const img of slice) {
+      blocks.push({
+        type: "image",
+        source: { type: "base64", media_type: img.mimeType, data: img.data },
+      });
+    }
+  }
 
-Hier is de kamerfoto:`,
-    },
-    {
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: kamerMimeType,
-        data: kamerImageBase64,
-      },
-    },
-    ...(pinterestImageUrls.length > 0
-      ? [
-          {
-            type: "text" as const,
-            text: `\nEn hier zijn ${pinterestImageUrls.slice(0, 6).length} inspiratiefoto's van mijn Pinterest board die mijn stijlvoorkeur weergeven:`,
-          },
-          ...pinterestImageContent,
-        ]
-      : []),
-    {
-      type: "text",
-      text: `
-Analyseer de kamer grondig (afmetingen, lichtinval, bestaande elementen, stijl) en analyseer de Pinterest-inspiratiefoto's om mijn stijlvoorkeur te begrijpen.
+  blocks.push({
+    type: "text",
+    text: `Analyseer de kamer grondig: afmetingen, lichtinval, bestaande elementen, architectuur.
+${slice.length > 0 ? "Analyseer ook de inspiratiefoto's om de stijlvoorkeur te begrijpen." : ""}
 
-Geef je advies in het volgende JSON-formaat:
+Geef 3 VERSCHILLENDE inrichtingsmogelijkheden terug. Elke optie is een eigen interpretatie:
+- Optie 1: de meest directe vertaling van de herkende stijl
+- Optie 2: een warmere/gezelliger variant
+- Optie 3: een gedurfdere of meer contrasterende variant
+
+Antwoord ALLEEN in dit exacte JSON-formaat:
 {
-  "stijlomschrijving": "Een beschrijving van de herkende stijl uit de Pinterest foto's en hoe die past bij de kamer (2-3 zinnen)",
-  "kleurenpalet": ["kleur1", "kleur2", "kleur3", "kleur4"],
-  "meubeladvies": [
-    { "item": "Naam van het meubel/element", "advies": "Specifiek advies voor dit item" },
-    ... (5-7 items)
-  ],
-  "inrichtingstips": [
-    "Tip 1 over indeling of gebruik van de ruimte",
-    "Tip 2 over accessoires of details",
-    "Tip 3 over lichtplan",
-    "Tip 4 over textiel of zachte elementen"
-  ],
-  "sfeeradvies": "Overkoepelend advies over hoe de sfeer te creëren die overeenkomt met jouw Pinterest stijl in deze specifieke ruimte (3-4 zinnen)",
-  "budgetinschatting": "Globale budgetinschatting voor de inrichting (bijv. €2.000 - €5.000 voor een complete make-over)"
-}
-
-Antwoord ALLEEN met de JSON, geen extra tekst.`,
+  "kamerObservatie": "Korte beschrijving van de kamer: ruimte, licht, architectuur (2 zinnen)",
+  "stijlSamenvatting": "De herkende stijlvoorkeur uit de inspiratiefoto's (1-2 zinnen)",
+  "opties": [
+    {
+      "naam": "Pakkende naam voor deze optie",
+      "stijlLabel": "bijv. Japandi, Industrieel, Mediterraan, Boho, Klassiek modern",
+      "beschrijving": "Wat maakt deze optie uniek en waarom past het bij de kamer én de stijl (2-3 zinnen)",
+      "kleurenpalet": ["kleur1", "kleur2", "kleur3", "kleur4"],
+      "meubeladvies": [
+        { "item": "Meubelnaam", "advies": "Concreet advies" },
+        { "item": "Meubelnaam", "advies": "Concreet advies" },
+        { "item": "Meubelnaam", "advies": "Concreet advies" },
+        { "item": "Meubelnaam", "advies": "Concreet advies" }
+      ],
+      "sfeer": "Hoe voelt deze ruimte aan als het klaar is (1-2 zinnen)",
+      "budget": "bijv. €2.500 - €5.000"
     },
-  ];
+    {},
+    {}
+  ]
+}`,
+  });
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 2000,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userContent }],
+    max_tokens: 3000,
+    system:
+      "Je bent een professionele interieurontwerper. Je geeft concrete, inspirerende inrichtingsadviezen in het Nederlands. Antwoord altijd met alleen de gevraagde JSON.",
+    messages: [{ role: "user", content: blocks }],
   });
 
   const text = response.content[0].type === "text" ? response.content[0].text : "";
-
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error("Geen geldig JSON-antwoord ontvangen van AI");
-  }
+  if (!jsonMatch) throw new Error("Geen geldig antwoord ontvangen van AI");
 
-  return JSON.parse(jsonMatch[0]) as DesignSuggestion;
+  return JSON.parse(jsonMatch[0]) as AnalyseResultaat;
 }

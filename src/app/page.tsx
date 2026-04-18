@@ -10,7 +10,7 @@ export default function Home() {
         <span className="text-xl font-bold tracking-tight">
           Huis<span style={{ color: "var(--accent)" }}>AI</span>
         </span>
-        <Link href="/analyse">
+        <Link href="/project">
           <button className="btn-primary text-sm py-2 px-4">
             Probeer gratis
           </button>
@@ -39,7 +39,7 @@ export default function Home() {
         </p>
 
         <div className="flex flex-col sm:flex-row gap-3 items-center">
-          <Link href="/analyse">
+          <Link href="/project">
             <button className="btn-primary text-base px-8 py-3">
               Begin met analyseren →
             </button>
@@ -94,7 +94,7 @@ export default function Home() {
         <p className="text-white/80 mb-8 text-lg">
           Analyseer in minder dan een minuut elke woning op jouw stijl.
         </p>
-        <Link href="/analyse">
+        <Link href="/project">
           <button className="bg-white text-[var(--accent)] px-8 py-3 rounded-xl font-bold text-base hover:bg-gray-100 transition-colors">
             Begin nu →
           </button>
