@@ -1,7 +1,8 @@
 /**
- * Background service worker: geocodes Dutch postal codes via Nominatim,
- * finds the nearest McDonald's via Overpass, and caches the results in
- * chrome.storage.local.
+ * Background service worker: geocodes Dutch postal codes via Nominatim and
+ * computes the distance to the nearest McDonald's locally, using a
+ * country-wide list of all Dutch McDonald's locations fetched once from
+ * Overpass (OpenStreetMap) and cached in chrome.storage.local.
  */
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 // Public Overpass instances; the main one regularly returns 429/504 under
@@ -11,12 +12,14 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.kumi.systems/api/interpreter',
 ];
 const OVERPASS_ATTEMPTS = 4;
-const SEARCH_RADIUS_M = 30000;
 const CACHE_PREFIX = 'mcd:';
-const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // per-postcode results: 30 days
+const LOCATIONS_KEY = 'mcd:locations';
+const LOCATIONS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // location list: 7 days
 const NOMINATIM_MIN_INTERVAL_MS = 1100; // Nominatim policy: max 1 request/sec
 
 const inFlight = new Map();
+let locationsPromise = null;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message && message.type === 'mcd-lookup' && typeof message.postcode === 'string') {
@@ -52,16 +55,26 @@ async function handleLookup(postcode) {
 }
 
 async function lookup(postcode) {
-  const origin = await geocode(postcode);
-  const nearest = await findNearestMcDonalds(origin.lat, origin.lon);
-  if (!nearest) {
-    throw new Error(`Geen McDonald’s gevonden binnen ${SEARCH_RADIUS_M / 1000} km.`);
+  // Fetch both in parallel: the location list usually comes straight from
+  // cache, Nominatim is the only real network call per postcode.
+  const [origin, locations] = await Promise.all([
+    geocode(postcode),
+    getMcDonaldsLocations(),
+  ]);
+
+  let best = null;
+  for (const loc of locations) {
+    const distanceKm = haversineKm(origin.lat, origin.lon, loc.lat, loc.lon);
+    if (!best || distanceKm < best.distanceKm) {
+      best = { distanceKm, ...loc };
+    }
   }
+  if (!best) throw new Error('Geen McDonald’s-locaties beschikbaar.');
   return {
-    distanceKm: nearest.distanceKm,
-    address: nearest.address,
-    name: nearest.name,
-    location: { lat: nearest.lat, lon: nearest.lon },
+    distanceKm: best.distanceKm,
+    address: best.address,
+    name: best.name,
+    location: { lat: best.lat, lon: best.lon },
   };
 }
 
@@ -98,7 +111,67 @@ async function geocode(postcode) {
   return { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon) };
 }
 
-// --- Overpass (nearest McDonald's) ---
+// --- McDonald's locations: one country-wide Overpass query, cached 7 days ---
+
+async function getMcDonaldsLocations() {
+  const stored = await chrome.storage.local.get(LOCATIONS_KEY);
+  const cached = stored[LOCATIONS_KEY];
+  if (cached && Date.now() - cached.ts < LOCATIONS_TTL_MS && cached.list.length) {
+    return cached.list;
+  }
+
+  if (!locationsPromise) {
+    locationsPromise = fetchMcDonaldsLocations()
+      .then(async (list) => {
+        await chrome.storage.local.set({
+          [LOCATIONS_KEY]: { ts: Date.now(), list },
+        });
+        return list;
+      })
+      .finally(() => {
+        locationsPromise = null;
+      });
+  }
+  const fresh = await locationsPromise.catch((err) => {
+    // Fall back to a stale cached list rather than failing outright.
+    if (cached && cached.list && cached.list.length) return cached.list;
+    throw err;
+  });
+  return fresh;
+}
+
+async function fetchMcDonaldsLocations() {
+  const query = `[out:json][timeout:90];
+area["ISO3166-1"="NL"][admin_level=2]->.nl;
+(
+  nwr["brand:wikidata"="Q38076"](area.nl);
+  nwr["amenity"="fast_food"]["name"~"mcdonald",i](area.nl);
+);
+out center tags;`;
+  const json = await overpassRequest(query);
+  const list = [];
+  for (const element of json.elements || []) {
+    const lat = element.lat ?? element.center?.lat;
+    const lon = element.lon ?? element.center?.lon;
+    if (lat == null || lon == null) continue;
+    const tags = element.tags || {};
+    list.push({
+      lat,
+      lon,
+      name: tags.name || "McDonald's",
+      address: formatAddress(tags),
+    });
+  }
+  if (list.length === 0) {
+    // An overloaded Overpass instance can return HTTP 200 with a "remark"
+    // and no elements; treat that as a transient failure, never as
+    // "no McDonald's exists".
+    throw new Error(
+      'De McDonald’s-locatielijst kon niet worden geladen (server overbelast). Probeer het over een minuut opnieuw.'
+    );
+  }
+  return list;
+}
 
 /**
  * Runs an Overpass query, rotating over the available mirrors with a short
@@ -130,34 +203,6 @@ async function overpassRequest(query) {
       lastError ? lastError.message : 'onbekende fout'
     }). Probeer het over een minuut opnieuw.`
   );
-}
-
-async function findNearestMcDonalds(lat, lon) {
-  const query = `[out:json][timeout:25];
-(
-  nwr["brand:wikidata"="Q38076"](around:${SEARCH_RADIUS_M},${lat},${lon});
-  nwr["amenity"="fast_food"]["name"~"mcdonald",i](around:${SEARCH_RADIUS_M},${lat},${lon});
-);
-out center tags;`;
-  const json = await overpassRequest(query);
-
-  let best = null;
-  for (const element of json.elements || []) {
-    const elLat = element.lat ?? element.center?.lat;
-    const elLon = element.lon ?? element.center?.lon;
-    if (elLat == null || elLon == null) continue;
-    const distanceKm = haversineKm(lat, lon, elLat, elLon);
-    if (!best || distanceKm < best.distanceKm) {
-      best = {
-        distanceKm,
-        lat: elLat,
-        lon: elLon,
-        name: element.tags?.name || "McDonald's",
-        address: formatAddress(element.tags || {}),
-      };
-    }
-  }
-  return best;
 }
 
 function formatAddress(tags) {

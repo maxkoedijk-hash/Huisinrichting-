@@ -18,9 +18,13 @@ dichtstbijzijnde McDonald's.
   - [Nominatim](https://nominatim.org/release-docs/latest/api/Search/)
     geocodeert de postcode naar coördinaten (gethrottled op 1 verzoek/seconde
     conform de gebruiksvoorwaarden).
-  - [Overpass API](https://overpass-api.de/) zoekt McDonald's-vestigingen
-    binnen 30 km (op `brand:wikidata=Q38076` en op naam) en de afstand wordt
-    hemelsbreed (haversine) berekend.
+  - Via de [Overpass API](https://overpass-api.de/) wordt eenmalig de
+    **complete lijst van alle McDonald's-vestigingen in Nederland**
+    opgehaald (op `brand:wikidata=Q38076` en op naam) en 7 dagen gecached.
+    De dichtstbijzijnde vestiging wordt daarna lokaal hemelsbreed
+    (haversine) berekend — geen Overpass-aanroep per postcode meer.
+    Bij een overbelaste server wordt geroteerd over mirrors met backoff,
+    en valt de extensie terug op een eventueel verlopen gecachete lijst.
 - Resultaten worden per postcode 30 dagen gecached in `chrome.storage.local`.
 - Via de **popup** (`popup.html`/`popup.js`) kan de extensie aan/uit worden
   gezet en de cache worden gewist. De toggle werkt direct door op alle open
