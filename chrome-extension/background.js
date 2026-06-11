@@ -11,7 +11,7 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ];
-const OVERPASS_ATTEMPTS = 4;
+const OVERPASS_ATTEMPTS = 3;
 const CACHE_PREFIX = 'mcd:';
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // per-postcode results: 30 days
 const LOCATIONS_KEY = 'mcd:locations';
@@ -141,13 +141,16 @@ async function getMcDonaldsLocations() {
 }
 
 async function fetchMcDonaldsLocations() {
-  const query = `[out:json][timeout:90];
+  // Note: "out center;" (default body mode) returns tags AND coordinates.
+  // Do not use "out center tags;": tags-mode omits node coordinates, which
+  // makes every node location unusable.
+  const query = `[out:json][timeout:30];
 area["ISO3166-1"="NL"][admin_level=2]->.nl;
 (
   nwr["brand:wikidata"="Q38076"](area.nl);
   nwr["amenity"="fast_food"]["name"~"mcdonald",i](area.nl);
 );
-out center tags;`;
+out center;`;
   const json = await overpassRequest(query);
   const list = [];
   for (const element of json.elements || []) {
@@ -190,6 +193,7 @@ async function overpassRequest(query) {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
+        signal: AbortSignal.timeout(15000),
       });
       if (res.ok) return await res.json();
       lastError = new Error(`HTTP ${res.status}`);
