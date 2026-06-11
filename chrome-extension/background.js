@@ -4,7 +4,13 @@
  * chrome.storage.local.
  */
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+// Public Overpass instances; the main one regularly returns 429/504 under
+// load, so we fall back to mirrors and retry.
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+const OVERPASS_ATTEMPTS = 4;
 const SEARCH_RADIUS_M = 30000;
 const CACHE_PREFIX = 'mcd:';
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -94,6 +100,38 @@ async function geocode(postcode) {
 
 // --- Overpass (nearest McDonald's) ---
 
+/**
+ * Runs an Overpass query, rotating over the available mirrors with a short
+ * exponential backoff. 429 (rate limited) and 5xx (overloaded/timeout)
+ * responses are treated as retryable.
+ */
+async function overpassRequest(query) {
+  let lastError = null;
+  for (let attempt = 0; attempt < OVERPASS_ATTEMPTS; attempt++) {
+    const endpoint = OVERPASS_ENDPOINTS[attempt % OVERPASS_ENDPOINTS.length];
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+    }
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query),
+      });
+      if (res.ok) return await res.json();
+      lastError = new Error(`HTTP ${res.status}`);
+      if (res.status !== 429 && res.status < 500) break; // not retryable
+    } catch (err) {
+      lastError = err; // network error: try the next mirror
+    }
+  }
+  throw new Error(
+    `De McDonald’s-zoekserver (Overpass) is momenteel overbelast (${
+      lastError ? lastError.message : 'onbekende fout'
+    }). Probeer het over een minuut opnieuw.`
+  );
+}
+
 async function findNearestMcDonalds(lat, lon) {
   const query = `[out:json][timeout:25];
 (
@@ -101,13 +139,7 @@ async function findNearestMcDonalds(lat, lon) {
   nwr["amenity"="fast_food"]["name"~"mcdonald",i](around:${SEARCH_RADIUS_M},${lat},${lon});
 );
 out center tags;`;
-  const res = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'data=' + encodeURIComponent(query),
-  });
-  if (!res.ok) throw new Error(`Zoeken naar McDonald’s mislukt (HTTP ${res.status}).`);
-  const json = await res.json();
+  const json = await overpassRequest(query);
 
   let best = null;
   for (const element of json.elements || []) {
