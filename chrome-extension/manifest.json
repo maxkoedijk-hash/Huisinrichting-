@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Postcode naar McDonald's",
+  "version": "1.0.0",
+  "description": "Detecteert Nederlandse postcodes (1234 AB) op webpagina's en toont de afstand tot de dichtstbijzijnde McDonald's.",
+  "permissions": ["activeTab", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Postcode naar McDonald's"
+  }
+}
