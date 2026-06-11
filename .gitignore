@@ -13,6 +13,7 @@ out/
 # misc
 .DS_Store
 *.pem
+*.zip
 
 # debug
 npm-debug.log*
