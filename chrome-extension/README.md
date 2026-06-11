@@ -18,13 +18,15 @@ dichtstbijzijnde McDonald's.
   - [Nominatim](https://nominatim.org/release-docs/latest/api/Search/)
     geocodeert de postcode naar coördinaten (gethrottled op 1 verzoek/seconde
     conform de gebruiksvoorwaarden).
-  - Via de [Overpass API](https://overpass-api.de/) wordt eenmalig de
-    **complete lijst van alle McDonald's-vestigingen in Nederland**
-    opgehaald (op `brand:wikidata=Q38076` en op naam) en 7 dagen gecached.
-    De dichtstbijzijnde vestiging wordt daarna lokaal hemelsbreed
-    (haversine) berekend — geen Overpass-aanroep per postcode meer.
-    Bij een overbelaste server wordt geroteerd over mirrors met backoff,
-    en valt de extensie terug op een eventueel verlopen gecachete lijst.
+  - Daarna worden **vijf onafhankelijke databronnen tegelijk** bevraagd
+    (race, eerste bruikbare antwoord wint, de rest wordt afgebroken):
+    vier publieke [Overpass](https://overpass-api.de/)-instanties
+    (overpass-api.de, kumi.systems, private.coffee, maps.mail.ru) met een
+    lichte `around`-query op `brand:wikidata=Q38076`/`brand=McDonald's`,
+    plus de officiële McDonald's store-locator-API. Eén trage of
+    overbelaste server blokkeert het resultaat dus nooit.
+  - De dichtstbijzijnde vestiging wordt lokaal hemelsbreed (haversine)
+    berekend.
 - Resultaten worden per postcode 30 dagen gecached in `chrome.storage.local`.
 - Via de **popup** (`popup.html`/`popup.js`) kan de extensie aan/uit worden
   gezet en de cache worden gewist. De toggle werkt direct door op alle open
@@ -39,8 +41,10 @@ dichtstbijzijnde McDonald's.
 
 ## Permissies
 
-Alleen `activeTab` en `storage`. De API-aanroepen naar Nominatim en Overpass
-hebben geen extra hostpermissies nodig omdat beide diensten CORS toestaan.
+`activeTab` en `storage`, plus `host_permissions` voor de zes
+data-endpoints (Nominatim, de vier Overpass-instanties en
+www.mcdonalds.com) zodat de service worker ze zonder CORS-beperkingen kan
+bevragen.
 
 ## Bestanden
 
