@@ -8,8 +8,8 @@ const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 // Public Overpass instances; the main one regularly returns 429/504 under
 // load, so we fall back to mirrors and retry.
 const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
 ];
 const OVERPASS_ATTEMPTS = 3;
 const CACHE_PREFIX = 'mcd:';
@@ -21,11 +21,23 @@ const NOMINATIM_MIN_INTERVAL_MS = 1100; // Nominatim policy: max 1 request/sec
 const inFlight = new Map();
 let locationsPromise = null;
 
+// Prefetch the location list so it is already cached before the user
+// hovers over the first postal code.
+chrome.runtime.onInstalled.addListener(() => {
+  getMcDonaldsLocations().catch((err) => console.warn('Prefetch mislukt:', err));
+});
+chrome.runtime.onStartup.addListener(() => {
+  getMcDonaldsLocations().catch((err) => console.warn('Prefetch mislukt:', err));
+});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message && message.type === 'mcd-lookup' && typeof message.postcode === 'string') {
     handleLookup(normalizePostcode(message.postcode)).then(
       sendResponse,
-      (err) => sendResponse({ error: err && err.message ? err.message : 'Onbekende fout' })
+      (err) => {
+        console.warn('Lookup mislukt voor', message.postcode, err);
+        sendResponse({ error: err && err.message ? err.message : 'Onbekende fout' });
+      }
     );
     return true; // keep the message channel open for the async response
   }
@@ -141,14 +153,16 @@ async function getMcDonaldsLocations() {
 }
 
 async function fetchMcDonaldsLocations() {
+  // A bounding box around the Netherlands (incl. a small border strip) is
+  // much cheaper for the server than computing the country area.
   // Note: "out center;" (default body mode) returns tags AND coordinates.
   // Do not use "out center tags;": tags-mode omits node coordinates, which
   // makes every node location unusable.
-  const query = `[out:json][timeout:30];
-area["ISO3166-1"="NL"][admin_level=2]->.nl;
+  const bbox = '50.5,3.0,53.8,7.4';
+  const query = `[out:json][timeout:25];
 (
-  nwr["brand:wikidata"="Q38076"](area.nl);
-  nwr["amenity"="fast_food"]["name"~"mcdonald",i](area.nl);
+  nwr["brand:wikidata"="Q38076"](${bbox});
+  nwr["amenity"="fast_food"]["name"~"McDonald"](${bbox});
 );
 out center;`;
   const json = await overpassRequest(query);
