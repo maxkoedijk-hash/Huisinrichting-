@@ -10,11 +10,20 @@ export default function Home() {
         <span className="text-xl font-bold tracking-tight">
           Huis<span style={{ color: "var(--accent)" }}>AI</span>
         </span>
-        <Link href="/project">
-          <button className="btn-primary text-sm py-2 px-4">
-            Probeer gratis
-          </button>
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/galerij"
+            className="text-sm font-medium hover:underline"
+            style={{ color: "var(--accent)" }}
+          >
+            🏰 3D Kunstgalerij
+          </Link>
+          <Link href="/project">
+            <button className="btn-primary text-sm py-2 px-4">
+              Probeer gratis
+            </button>
+          </Link>
+        </div>
       </nav>
 
       {/* Hero */}
